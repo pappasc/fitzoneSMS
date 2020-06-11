@@ -186,29 +186,70 @@ class studioPhone:
             self.checkInterval -= 1
 
     def sendSMS(self, tMess):
-        try:
-            result = self.platform.post('/restapi/v1.0/account/~/extension/~/sms',
-                          {
-                              'from' : { 'phoneNumber': self.rcUn },
-                              'to'   : [ {'phoneNumber': tMess.pNum} ],
-                              'text' : tMess.tMess
-                          })
-            tMess.sendAttempt += 1
-            tMess.reQueue = 0
-            tMess.messId = str(json.loads(result.text())['id'])
-            tMess.iterSendAttempt = str(json.loads(result.text())['smsSendingAttemptsCount'])
-        except Exception as error:
-            print("Error in sendSMS " + str(error))
-            raise error
+        while True:
+            try:
+                result = self.platform.post('/restapi/v1.0/account/~/extension/~/sms',
+                              {
+                                  'from' : { 'phoneNumber': self.rcUn },
+                                  'to'   : [ {'phoneNumber': tMess.pNum} ],
+                                  'text' : tMess.tMess
+                              })
+            except Exception as error:
+                print("Error in sendSMS sending in message: " + str(error))
+                if str(error) == "Request rate exceeded":
+                    self.increaseSendThrottle()
+                    successCount = 0
+                    print("API throttle engaged while sending message. Force sleep for 2 min")
+                    time.sleep(75)
+                    print("45s remaining")
+                    time.sleep(15)
+                    print("30s remaining")
+                    time.sleep(15)
+                    print("15s remaining")
+                    time.sleep(15)
+                    print("Resuming")
+                    time.sleep(self.sendInterval + 15)
+                else:
+                    print("An error occurred sending message but not API throttle")
+                    print("Error sending in sendMessage: " + str(error))
+                    raise error
+            else:
+                #make functions in textMessage class that adjust and set the items below
+                tMess.sendAttempt += 1
+                tMess.reQueue = 0
+                tMess.messId = str(json.loads(result.text())['id'])
+                tMess.iterSendAttempt = str(json.loads(result.text())['smsSendingAttemptsCount'])
+                time.sleep(self.sendInterval)
+                break
 
     def checkMessageStatus(self, tMess):
-        try:
-            checkStatus = self.platform.get('/restapi/v1.0/account/~/extension/~/message-store/' + tMess.messId)
-            tMess.sentResult = json.loads(checkStatus.text())["messageStatus"]
-            return tMess.sentResult
-        except Exception as error:
-            print("Error in getMessageStatus: " + str(error))
-            raise error
+        while True:
+            try:
+                checkStatus = self.platform.get('/restapi/v1.0/account/~/extension/~/message-store/' + tMess.messId)
+            except Exception as error:
+                print("Error checking message status: " + str(error))
+                if str(error) == "Request rate exceeded":
+                    self.increaseCheckThrottle()
+                    print("API throttle engaged while checking message status. Force sleep for 1 min: " + str(ident))
+                    time.sleep(15)
+                    print("45s remaining")
+                    time.sleep(15)
+                    print("30s remaining")
+                    time.sleep(15)
+                    print("15s remaining")
+                    time.sleep(15)
+                    print("Resuming")
+                    time.sleep(self.checkInterval)
+                else:
+                    print("An error occurred checking message status but not API throttle")
+                    print("Error checking message status: " + str(error))
+                    raise error
+            else:
+                #make a function in textMessage class that sets the sentResult and one that gets it
+                tMess.sentResult = json.loads(checkStatus.text())["messageStatus"]
+                time.sleep(oPhone.checkInterval)
+                #after resolving above comment, just break instead of returning
+                return tMess.sentResult
 
     def getMessages(self, messDir, messFromDate):
         try:
@@ -268,6 +309,9 @@ class smsKiosk:
 
     def sendBulkSMS(self):
 
+        x = datetime.datetime.now()
+        fName = x.strftime("%y%b%d_%H_%M_%S_failedMessageNums.out")
+
         listName = input("Name of the member list file: ")
         while not os.path.isfile(listName):
             print("File not found.")
@@ -299,7 +343,7 @@ class smsKiosk:
                 print(str(error))
                 raise
 
-            print("Message in file:")
+            print("Message in file:\n")
             print(messageBody)
             if input("Is this the correct message? (Y/y or otherwise): ") in ["y", "Y", "yes", "Yes"]:
                 break
@@ -323,45 +367,25 @@ class smsKiosk:
                 fullName = capFirstName + " " + capLastName
                 pNum = getNumberAuto(str(row[4]))
             except Exception as error:
-                print("Probs hit the end")
+                print(str(error))
                 break
+
             tMessage = messageBody
             textMessage = smsMessage(pNum, tMessage, fullName)
+
             #Attempt sending the message
-            while True:
-                try:
-                    self.oPhone.sendSMS(textMessage)
-                    break
-                except Exception as error:
-                    #If the message doesn't send we sleep and try again
-                    print("Error sending in message: " + str(error))
-                    if str(error) == "Request rate exceeded":
-                        self.oPhone.increaseSendThrottle()
-                        successCount = 0
-                        print("API throttle engaged while sending message. Force sleep for 2 min")
-                        time.sleep(75)
-                        print("45s remaining")
-                        time.sleep(15)
-                        print("30s remaining")
-                        time.sleep(15)
-                        print("15s remaining")
-                        time.sleep(15)
-                        print("Resuming")
-                        time.sleep(self.oPhone.sendInterval + 15)
-                    else:
-                        print("An error occurred sending message but not API throttle")
-                        print("Error sending in sendMessage: " + str(error))
-                        raise error
-            print("Message attempt sent to " + fullName + " at " + pNum)
-            recheckMessages[count % self.numWorkers].append(textMessage)
-            count = count + 1
-            successCount += 1
-            time.sleep(self.oPhone.sendInterval)
+            try:
+                self.oPhone.sendSMS(textMessage)
+            except:
+                print("Error sending message in bulk send to " + fullName + " at " + pNum)
+            else:
+                print("Message attempt sent to " + fullName + " at " + pNum)
+                recheckMessages[count % self.numWorkers].append(textMessage)
+                count = count + 1
+                successCount += 1
+                time.sleep(self.oPhone.sendInterval)
 
         print("Bulk text finished!")
-
-        x = datetime.datetime.now()
-        fName = x.strftime("%y%b%d_%H_%M_%S_failedMessageNums.out")
 
         def start(task, *args):
             process = multiprocessing.Process(target=task, args=args)
