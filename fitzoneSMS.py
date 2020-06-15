@@ -71,36 +71,23 @@ def worker_task(ident, oPhone, fiName, checkList):
     print("\n****** Worker " + str(ident) + " is starting to recheck " + str(len(checkList)) + " messages ******\n")
 
     for teMess in checkList:
-        print("Worker " + str(ident) + ": Check message " + str(teMess.messId) + " with number: " + teMess.pNum + " to: " + teMess.recipient)
+        print("Worker " + str(ident) + ": Check message " + str(teMess.getMessId()) + " with number: " + teMess.getPnum() + " to: " + teMess.getRecipient())
+        readOutMess = "Worker " + str(ident) + ": Message " + str(teMess.getMessId()) + " to number " + teMess.getPnum() + " to: " + teMess.getRecipient()
         while True:
             try:
                 time.sleep(oPhone.checkInterval)
                 oPhone.checkMessageStatus(teMess)
+                sentResult = teMess.getResult()
                 break
             except Exception as error:
                 print("Worker " + str(ident) + ": Error checking message status: " + str(error))
-                if str(error) == "Request rate exceeded":
-                    oPhone.increaseCheckThrottle()
-                    print("API throttle engaged while checking message status. Force sleep for 1 min for worker: " + str(ident))
-                    time.sleep(15)
-                    print("Worker " + str(ident) + " has 45s remaining")
-                    time.sleep(15)
-                    print("Worker " + str(ident) + " has 30s remaining")
-                    time.sleep(15)
-                    print("Worker " + str(ident) + " has 15s remaining")
-                    time.sleep(15)
-                    print("Worker " + str(ident) + " is resuming")
-                    time.sleep(oPhone.checkInterval)
-                else:
-                    print("Worker " + str(ident) + ": An error occurred checking message status but not API throttle")
-                    print("Error checking in sendMessage: " + str(error))
-                    raise error
-        if teMess.sentResult == 'Sent' or teMess.sentResult == 'Delivered' or teMess.sentResult == 'Received':
-            print("Worker " + str(ident) + ": Message " + str(teMess.messId) + " to number " + teMess.pNum + " to: " + teMess.recipient + " was sent")
+                raise error
+        if sentResult == 'Sent' or sentResult == 'Delivered' or sentResult == 'Received':
+            readOutMess += " was sent"
             continue
-        elif teMess.sentResult == 'SendingFailed' or teMess.sentResult == 'DeliveryFailed':
-            print("Worker " + str(ident) + ": Message " + str(teMess.messId) + " to number " + teMess.pNum + " to: " + teMess.recipient + " failed")
-            if teMess.sendAttempt < 5:
+        elif sentResult == 'SendingFailed' or sentResult == 'DeliveryFailed':
+            readOutMess += " failed"
+            if teMess.getSendAttempt < 5:
                 print("Worker " + str(ident) + ": Attempting resend to " + teMess.pNum + " to: " + teMess.recipient)
                 while True:
                     try:
@@ -142,7 +129,6 @@ def worker_task(ident, oPhone, fiName, checkList):
                 print("Worker " + str(ident) + ": Requeuing " +  teMess.pNum + " to: " + teMess.recipient)
                 teMess.reQueue += 1
                 checkList.append(teMess)
-                continue
 
     print("Worker " + str(ident) + " is finished")
 
@@ -186,11 +172,12 @@ class studioPhone:
     def sendSMS(self, tMess):
         while True:
             try:
+                time.sleep(self.sendInterval)
                 result = self.platform.post('/restapi/v1.0/account/~/extension/~/sms',
                               {
                                   'from' : { 'phoneNumber': self.rcUn },
-                                  'to'   : [ {'phoneNumber': tMess.pNum} ],
-                                  'text' : tMess.tMess
+                                  'to'   : [ {'phoneNumber': tMess.getPnum()} ],
+                                  'text' : tMess.getMessageText()
                               })
             except Exception as error:
                 print("Error in sendSMS sending in message: " + str(error))
@@ -214,18 +201,17 @@ class studioPhone:
             else:
                 #make functions in textMessage class that adjust and set the items below
                 #then change check and send stuff in worker task
-                tMess.sendAttempt += 1
-                tMess.reQueue = 0
-                tMess.messId = str(json.loads(result.text())['id'])
-                tMess.iterSendAttempt = str(json.loads(result.text())['smsSendingAttemptsCount'])
-                time.sleep(self.sendInterval)
+                tMess.increaseSendAttempt()
+                tMess.resetReQueue()
+                tMess.setMessId(str(json.loads(result.text())['id']))
+                tMess.setIterSendAttempt(str(json.loads(result.text())['smsSendingAttemptsCount']))
                 break
 
     def checkMessageStatus(self, tMess):
         while True:
             try:
-                time.sleep(oPhone.checkInterval)
-                checkStatus = self.platform.get('/restapi/v1.0/account/~/extension/~/message-store/' + tMess.messId)
+                time.sleep(self.checkInterval)
+                checkStatus = self.platform.get('/restapi/v1.0/account/~/extension/~/message-store/' + tMess.getMessId())
             except Exception as error:
                 print("Error checking message status: " + str(error))
                 if str(error) == "Request rate exceeded":
@@ -278,6 +264,7 @@ class smsMessage:
         self.sentResult = "Not"
         self.sendAttempt = 0
         self.iterSendAttempt = 0
+        self.reQueue = 0
 
     def setResult(self, sentResult):
         self.sentResult = sentResult
@@ -291,6 +278,15 @@ class smsMessage:
     def getSendAttempt(self):
         return self.sendAttempt
 
+    def resetReQueue(self):
+        self.reQueue = 0
+
+    def increaseReQueue(self):
+        self.reQueue += 1
+
+    def getReQueue(self):
+        return self.reQueue
+
     def setIterSendAttempt(self, iterSendAttempt):
         self.iterSendAttempt = iterSendAttempt
 
@@ -302,6 +298,15 @@ class smsMessage:
 
     def getRecipient(self):
         return self.recipient
+
+    def setMessId(self, messId):
+        self.messId = messId
+
+    def getMessId(self):
+        return self.messId
+
+    def getMessageText(self):
+        return self.tMess
 
 #*******************************************************************************
 #Class: smsKiosk
