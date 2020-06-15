@@ -107,7 +107,6 @@ def worker_task(ident, oPhone, fiName, checkList):
                         time.sleep(oPhone.sendInterval)
                         print("Worker " + str(ident) + ": Resending to number " + teMess.pNum + " to: " + teMess.recipient)
                         oPhone.sendSMS(teMess)
-                        #recheckMessages.remove(teMess)
                         checkList.append(teMess)
                         break
                     except Exception as error:
@@ -133,7 +132,6 @@ def worker_task(ident, oPhone, fiName, checkList):
                 f = open(fiName, "a")
                 f.write("Failed: " + str(teMess.pNum) + " " + teMess.recipient + "\n")
                 f.close()
-                #recheckMessages.remove(teMess)
         elif teMess.sentResult == 'Queued':
             if teMess.reQueue > 5:
                 print("Worker " + str(ident) + ": Message " + str(teMess.messId) + " to number " + teMess.pNum + " to: " + teMess.recipient + " requeued a lot")
@@ -215,6 +213,7 @@ class studioPhone:
                     raise error
             else:
                 #make functions in textMessage class that adjust and set the items below
+                #then change check and send stuff in worker task
                 tMess.sendAttempt += 1
                 tMess.reQueue = 0
                 tMess.messId = str(json.loads(result.text())['id'])
@@ -225,6 +224,7 @@ class studioPhone:
     def checkMessageStatus(self, tMess):
         while True:
             try:
+                time.sleep(oPhone.checkInterval)
                 checkStatus = self.platform.get('/restapi/v1.0/account/~/extension/~/message-store/' + tMess.messId)
             except Exception as error:
                 print("Error checking message status: " + str(error))
@@ -245,11 +245,8 @@ class studioPhone:
                     print("Error checking message status: " + str(error))
                     raise error
             else:
-                #make a function in textMessage class that sets the sentResult and one that gets it
-                tMess.sentResult = json.loads(checkStatus.text())["messageStatus"]
-                time.sleep(oPhone.checkInterval)
-                #after resolving above comment, just break instead of returning
-                return tMess.sentResult
+                tMess.setResult(json.loads(checkStatus.text())["messageStatus"])
+                break
 
     def getMessages(self, messDir, messFromDate):
         try:
@@ -281,6 +278,30 @@ class smsMessage:
         self.sentResult = "Not"
         self.sendAttempt = 0
         self.iterSendAttempt = 0
+
+    def setResult(self, sentResult):
+        self.sentResult = sentResult
+
+    def getResult(self):
+        return self.sentResult
+
+    def increaseSendAttempt(self):
+        self.sendAttempt += 1
+
+    def getSendAttempt(self):
+        return self.sendAttempt
+
+    def setIterSendAttempt(self, iterSendAttempt):
+        self.iterSendAttempt = iterSendAttempt
+
+    def getIterSendAttempt(self):
+        return self.iterSendAttempt
+
+    def getPnum(self):
+        return self.pNum
+
+    def getRecipient(self):
+        return self.recipient
 
 #*******************************************************************************
 #Class: smsKiosk
