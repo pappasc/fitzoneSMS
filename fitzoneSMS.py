@@ -50,7 +50,7 @@ def getNumber():
             print("Invalid number. Try again")
 
 def getNumberAuto(pfNum):
-    index = 0
+    index = len(pfNum)
     for i in range(len(pfNum)):
         if pfNum[i] == ".":
             index = i
@@ -71,71 +71,55 @@ def worker_task(ident, oPhone, fiName, checkList):
     print("\n****** Worker " + str(ident) + " is starting to recheck " + str(len(checkList)) + " messages ******\n")
 
     for teMess in checkList:
-        print("Worker " + str(ident) + ": Check message " + str(teMess.getMessId()) + " with number: " + teMess.getPnum() + " to: " + teMess.getRecipient())
         readOutMess = "Worker " + str(ident) + ": Message " + str(teMess.getMessId()) + " to number " + teMess.getPnum() + " to: " + teMess.getRecipient()
         while True:
             try:
-                time.sleep(oPhone.checkInterval)
                 oPhone.checkMessageStatus(teMess)
-                sentResult = teMess.getResult()
-                break
             except Exception as error:
                 print("Worker " + str(ident) + ": Error checking message status: " + str(error))
-                raise error
+                #not raising error because I want it to keep going
+            else:
+                sentResult = teMess.getResult()
+                break
         if sentResult == 'Sent' or sentResult == 'Delivered' or sentResult == 'Received':
-            readOutMess += " was sent"
-            continue
+            outcomeMess = " was sent"
         elif sentResult == 'SendingFailed' or sentResult == 'DeliveryFailed':
-            readOutMess += " failed"
-            if teMess.getSendAttempt < 5:
-                print("Worker " + str(ident) + ": Attempting resend to " + teMess.pNum + " to: " + teMess.recipient)
+            outcomeMess = " failed."
+            if teMess.getSendAttempt() < 10:
                 while True:
                     try:
-                        time.sleep(oPhone.sendInterval)
-                        print("Worker " + str(ident) + ": Resending to number " + teMess.pNum + " to: " + teMess.recipient)
                         oPhone.sendSMS(teMess)
-                        checkList.append(teMess)
-                        break
                     except Exception as error:
                         print("Worker " + str(ident) + ": Error sending message: " + str(error))
-                        if str(error) == "Request rate exceeded":
-                            oPhone.increaseSendThrottle()
-                            print("Worker " + str(ident) + ": API throttle engaged while sending message. Force sleep for 1 min for worker: " + str(ident))
-                            time.sleep(15)
-                            print("Worker " + str(ident) + " has 45s remaining")
-                            time.sleep(15)
-                            print("Worker " + str(ident) + " has 30s remaining")
-                            time.sleep(15)
-                            print("Worker " + str(ident) + " has 15s remaining")
-                            time.sleep(15)
-                            print("Worker " + str(ident) + " is resuming")
-                            time.sleep(oPhone.sendInterval + 15)
-                        else:
-                            print("An error occurred resending message not API throttle")
-                            print("Error sending in sendMessage: " + str(error))
-                            raise error
+                        #not raising error because I want it to keep going
+                    else:
+                        outcomeMess = " Resent"
+                        checkList.append(teMess)
+                        break
             else:
-                print("Worker " + str(ident) + ": Message " + str(teMess.messId) + " to number " + teMess.pNum + " to: " + teMess.recipient + " absolutely failed")
+                outcomeMess = " absolutely failed"
                 f = open(fiName, "a")
-                f.write("Failed: " + str(teMess.pNum) + " " + teMess.recipient + "\n")
+                f.write("Failed: " + teMess.getPnum() + " " + teMess.getRecipient() + "\n")
                 f.close()
-        elif teMess.sentResult == 'Queued':
-            if teMess.reQueue > 5:
-                print("Worker " + str(ident) + ": Message " + str(teMess.messId) + " to number " + teMess.pNum + " to: " + teMess.recipient + " requeued a lot")
+        elif sentResult == 'Queued':
+            if teMess.getReQueue() > 10:
+                outcomeMess = " requeued a lot"
                 f = open(fiName, "a")
-                f.write("Queued: " + str(teMess.pNum) + " " + teMess.recipient + "\n")
+                f.write("Queued: " + teMess.getPnum() + " " + teMess.getRecipient() + "\n")
                 f.close()
             else:
-                print("Worker " + str(ident) + ": Requeuing " +  teMess.pNum + " to: " + teMess.recipient)
-                teMess.reQueue += 1
+                outcomeMess = " requeuing"
+                teMess.increaseReQueue()
                 checkList.append(teMess)
+
+        print(readOutMess + outcomeMess)
 
     print("Worker " + str(ident) + " is finished")
 
-#*****************************************************************************
+#*******************************************************************************
 # Class: studioPhone
 # Purpose: Class for creating a phone to use
-#*****************************************************************************
+#*******************************************************************************
 
 class studioPhone:
     def __init__(self, rcClientId, rcClientSecret, rcUn, rcPass, rcServer, rcExt):
@@ -199,8 +183,6 @@ class studioPhone:
                     print("Error sending in sendMessage: " + str(error))
                     raise error
             else:
-                #make functions in textMessage class that adjust and set the items below
-                #then change check and send stuff in worker task
                 tMess.increaseSendAttempt()
                 tMess.resetReQueue()
                 tMess.setMessId(str(json.loads(result.text())['id']))
